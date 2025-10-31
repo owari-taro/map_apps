@@ -1,32 +1,56 @@
 import dash_leaflet as dl
 from dash_extensions.enrich import DashProxy, html
 from dash import dash_table, Input, Output, State, dcc
-import pandas as pd
+import geopandas as gpd
 from dash.exceptions import PreventUpdate
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 import json
 
 # Sample data with dates
+cities = ['Tokyo', 'Osaka', 'Nagoya', 'Fukuoka'] * 3
+lats = [35.6762, 34.6937, 35.1814, 33.5902] * 3
+lons = [139.6503, 135.5023, 136.9064, 130.4017] * 3
+pops = ['37.4M', '19.1M', '9.4M', '5.5M'] * 3
+dates = [
+    *[datetime.now().date() for _ in range(4)],
+    *[(datetime.now() - timedelta(days=1)).date() for _ in range(4)],
+    *[(datetime.now() - timedelta(days=2)).date() for _ in range(4)]
+]
+
+# Create geometry points for each city
+geometry = [Point(lon, lat) for lon, lat in zip(lons, lats)]
+
+# Create GeoDataFrame
 data = {
-    'City': ['Tokyo', 'Osaka', 'Nagoya', 'Fukuoka'] * 3,  # Repeat cities for different dates
-    'Latitude': [35.6762, 34.6937, 35.1814, 33.5902] * 3,
-    'Longitude': [139.6503, 135.5023, 136.9064, 130.4017] * 3,
-    'Population': ['37.4M', '19.1M', '9.4M', '5.5M'] * 3,
-    'Date': [
-        # Today and previous days for each city
-        *[datetime.now().date() for _ in range(4)],
-        *[(datetime.now() - timedelta(days=1)).date() for _ in range(4)],
-        *[(datetime.now() - timedelta(days=2)).date() for _ in range(4)]
-    ]
+    'City': cities,
+    'Population': pops,
+    'Date': dates,
+    'Latitude': lats,
+    'Longitude': lons
 }
-df = pd.DataFrame(data)
+df = gpd.GeoDataFrame(data, geometry=geometry, crs="EPSG:4326")
 
 app = DashProxy()
 app.layout = html.Div([
     # Map component
     dl.Map([
         dl.TileLayer(url="https://cyberjapandata.gsi.go.jp/xyz/english/{z}/{x}/{y}.png"),
+        # Draw control
+        dl.FeatureGroup([
+            dl.EditControl(
+                id="draw-control",
+                position="topright",
+                draw={
+                    "rectangle": True,
+                    "polygon": True,
+                    "circle": False,
+                    "circlemarker": False,
+                    "marker": False,
+                    "polyline": False,
+                },
+            )
+        ]),
     ],
     id='map',
     center=[35.9009,137.3258], 
@@ -98,20 +122,21 @@ def update_map(selected_rows, data):
     #zoom levelが大きすぎると地図が表示されない
     return [lat, lon], 10
 
-# Callback to filter table based on search input and date range
+# Callback to filter table based on search input, date range, and drawn polygon
 @app.callback(
     Output('city-table', 'data'),
     [Input('search-box', 'value'),
      Input('date-picker', 'start_date'),
-     Input('date-picker', 'end_date')]
+     Input('date-picker', 'end_date'),
+     Input('draw-control', 'geojson')]
 )
-def update_table(search_term, start_date, end_date):
+def update_table(search_term, start_date, end_date, geojson):
     filtered_df = df.copy()
     
     # Filter by date range
     if start_date and end_date:
-        start_date = pd.to_datetime(start_date).date()
-        end_date = pd.to_datetime(end_date).date()
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
         filtered_df = filtered_df[
             (filtered_df['Date'] >= start_date) & 
             (filtered_df['Date'] <= end_date)
@@ -122,6 +147,23 @@ def update_table(search_term, start_date, end_date):
         filtered_df = filtered_df[
             filtered_df['City'].str.contains(search_term, case=False, na=False)
         ]
+    
+    # Filter by drawn polygon
+    if geojson and geojson['features']:
+        # Get the last drawn feature
+        feature = geojson['features'][-1]
+        
+        if feature['geometry']['type'] in ['Polygon', 'Rectangle']:
+            # Convert GeoJSON coordinates to Shapely polygon
+            coords = feature['geometry']['coordinates'][0]
+            poly = Polygon(coords)
+            
+            # Check each city's coordinates against the polygon
+            mask = filtered_df.apply(
+                lambda row: poly.contains(Point(row['Longitude'], row['Latitude'])), 
+                axis=1
+            )
+            filtered_df = filtered_df[mask]
     
     return filtered_df.to_dict('records')
 
