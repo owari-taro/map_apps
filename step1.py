@@ -88,8 +88,8 @@ app.layout = html.Div([
     # Table component
     dash_table.DataTable(
         id='city-table',
-        columns=[{"name": i, "id": i} for i in df.columns],
-        data=df.to_dict('records'),
+        columns=[{"name": i, "id": i} for i in df.drop('geometry', axis=1).columns],
+        data=df.drop('geometry', axis=1).to_dict('records'),
         style_table={'height': '300px', 'overflowY': 'auto'},
         style_cell={'textAlign': 'left'},
         style_header={
@@ -132,6 +132,8 @@ def update_map(selected_rows, data):
 )
 def update_table(search_term, start_date, end_date, geojson):
     filtered_df = df.copy()
+    # Ensure we're working with a GeoDataFrame
+    filtered_df = gpd.GeoDataFrame(filtered_df, geometry='geometry', crs="EPSG:4326")
     
     # Filter by date range
     if start_date and end_date:
@@ -158,14 +160,14 @@ def update_table(search_term, start_date, end_date, geojson):
             coords = feature['geometry']['coordinates'][0]
             poly = Polygon(coords)
             
-            # Check each city's coordinates against the polygon
-            mask = filtered_df.apply(
-                lambda row: poly.contains(Point(row['Longitude'], row['Latitude'])), 
-                axis=1
-            )
-            filtered_df = filtered_df[mask]
+            # Create a GeoSeries with the polygon using the same CRS as our points
+            poly_gs = gpd.GeoSeries([poly], crs="EPSG:4326")
+            
+            # Use spatial join to find points within polygon
+            filtered_df = filtered_df[filtered_df.geometry.within(poly_gs.iloc[0])]
     
-    return filtered_df.to_dict('records')
+    # Remove geometry column before returning data to the table
+    return filtered_df.drop('geometry', axis=1).to_dict('records')
 
 if __name__ == "__main__":
     app.run()
