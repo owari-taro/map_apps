@@ -1,15 +1,24 @@
 import dash_leaflet as dl
-from dash_extensions.enrich import DashProxy
-from dash import html, dash_table, Input, Output, State, dcc
+from dash_extensions.enrich import DashProxy, html
+from dash import dash_table, Input, Output, State, dcc
 import pandas as pd
 from dash.exceptions import PreventUpdate
+from datetime import datetime, timedelta
+from shapely.geometry import Point, Polygon
+import json
 
-# Sample data
+# Sample data with dates
 data = {
-    'City': ['Tokyo', 'Osaka', 'Nagoya', 'Fukuoka'],
-    'Latitude': [35.6762, 34.6937, 35.1814, 33.5902],
-    'Longitude': [139.6503, 135.5023, 136.9064, 130.4017],
-    'Population': ['37.4M', '19.1M', '9.4M', '5.5M']
+    'City': ['Tokyo', 'Osaka', 'Nagoya', 'Fukuoka'] * 3,  # Repeat cities for different dates
+    'Latitude': [35.6762, 34.6937, 35.1814, 33.5902] * 3,
+    'Longitude': [139.6503, 135.5023, 136.9064, 130.4017] * 3,
+    'Population': ['37.4M', '19.1M', '9.4M', '5.5M'] * 3,
+    'Date': [
+        # Today and previous days for each city
+        *[datetime.now().date() for _ in range(4)],
+        *[(datetime.now() - timedelta(days=1)).date() for _ in range(4)],
+        *[(datetime.now() - timedelta(days=2)).date() for _ in range(4)]
+    ]
 }
 df = pd.DataFrame(data)
 
@@ -24,16 +33,33 @@ app.layout = html.Div([
     zoom=5, 
     style={"height": "50vh"}),
     
-    # Search box
+    # Search and filter controls
     html.Div([
-        html.Label("Search Cities:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-        dcc.Input(
-            id='search-box',
-            type='text',
-            placeholder='Type to search...',
-            style={'width': '200px', 'marginBottom': '10px', 'padding': '5px'}
-        ),
-    ], style={'margin': '10px 0'}),
+        # City search
+        html.Div([
+            html.Label("Search Cities:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+            dcc.Input(
+                id='search-box',
+                type='text',
+                placeholder='Type to search...',
+                style={'width': '200px', 'padding': '5px'}
+            ),
+        ], style={'marginBottom': '10px'}),
+        
+        # Date range picker
+        html.Div([
+            html.Label("Filter by Date:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+            dcc.DatePickerRange(
+                id='date-picker',
+                min_date_allowed=datetime.now().date() - timedelta(days=2),
+                max_date_allowed=datetime.now().date(),
+                initial_visible_month=datetime.now().date(),
+                start_date=datetime.now().date() - timedelta(days=2),
+                end_date=datetime.now().date(),
+                style={'zIndex': 100}  # Ensure calendar popup shows above map
+            ),
+        ]),
+    ], style={'margin': '10px 0', 'padding': '10px', 'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
     
     # Table component
     dash_table.DataTable(
@@ -72,17 +98,31 @@ def update_map(selected_rows, data):
     #zoom levelが大きすぎると地図が表示されない
     return [lat, lon], 10
 
-# Callback to filter table based on search input
+# Callback to filter table based on search input and date range
 @app.callback(
     Output('city-table', 'data'),
-    Input('search-box', 'value')
+    [Input('search-box', 'value'),
+     Input('date-picker', 'start_date'),
+     Input('date-picker', 'end_date')]
 )
-def update_table(search_term):
-    if not search_term:
-        return df.to_dict('records')
+def update_table(search_term, start_date, end_date):
+    filtered_df = df.copy()
     
-    # Filter dataframe based on search term (case-insensitive)
-    filtered_df = df[df['City'].str.contains(search_term, case=False, na=False)]
+    # Filter by date range
+    if start_date and end_date:
+        start_date = pd.to_datetime(start_date).date()
+        end_date = pd.to_datetime(end_date).date()
+        filtered_df = filtered_df[
+            (filtered_df['Date'] >= start_date) & 
+            (filtered_df['Date'] <= end_date)
+        ]
+    
+    # Filter by city name
+    if search_term:
+        filtered_df = filtered_df[
+            filtered_df['City'].str.contains(search_term, case=False, na=False)
+        ]
+    
     return filtered_df.to_dict('records')
 
 if __name__ == "__main__":
