@@ -1,6 +1,6 @@
 import dash_leaflet as dl
 from dash_extensions.enrich import DashProxy
-from dash import html, dash_table, Input, Output, State
+from dash import html, dash_table, Input, Output, State, dcc
 import pandas as pd
 from dash.exceptions import PreventUpdate
 
@@ -71,6 +71,19 @@ def update_map(selected_rows, data):
     print(lat,lon)
     #zoom levelが大きすぎると地図が表示されない
     return [lat, lon], 10
+
+# Callback to filter table based on search input
+@app.callback(
+    Output('city-table', 'data'),
+    Input('search-box', 'value')
+)
+def update_table(search_term):
+    if not search_term:
+        return df.to_dict('records')
+    
+    # Filter dataframe based on search term (case-insensitive)
+    filtered_df = df[df['City'].str.contains(search_term, case=False, na=False)]
+    return filtered_df.to_dict('records')
 
 if __name__ == "__main__":
     app.run()
